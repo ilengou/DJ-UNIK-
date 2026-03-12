@@ -1,0 +1,23 @@
+export interface Service {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  category: 'package' | 'addon';
+  hours?: number;
+}
+
+export interface QuoteRequest {
+  id: string;
+  client_name: string;
+  client_email: string;
+  client_phone: string;
+  event_type: string;
+  event_date: string;
+  venue: string;
+  guest_count: number;
+  services: Service[];
+  total_amount: number;
+  status?: 'pending' | 'confirmed' | 'expired';
+  created_at?: string;
+}
