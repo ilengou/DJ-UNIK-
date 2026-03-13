@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { 
@@ -27,7 +27,8 @@ import {
   Play,
   Trash2,
   RefreshCcw,
-  Share2
+  Share2,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SERVICES, EVENT_TYPES } from './constants';
@@ -64,31 +65,44 @@ const StepIndicator = ({ currentStep }: { currentStep: number }) => {
 
 const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) => void }) => {
   const [step, setStep] = useState(1);
-  const [formData, setFormData] = useState<Partial<QuoteRequest>>({
-    client_name: '',
-    client_email: '',
-    client_phone: '',
-    event_type: EVENT_TYPES[0],
-    event_date: '',
-    venue: '',
-    guest_count: 50,
-    services: [],
-    total_amount: 0
+  const [formData, setFormData] = useState<Partial<QuoteRequest>>(() => {
+    const saved = localStorage.getItem('dj_unik_client_details');
+    const details = saved ? JSON.parse(saved) : {};
+    return {
+      client_name: details.client_name || '',
+      client_email: details.client_email || '',
+      client_phone: details.client_phone || '',
+      event_type: EVENT_TYPES[0],
+      event_date: '',
+      venue: '',
+      guest_count: 50,
+      distance_km: 0,
+      services: [],
+      total_amount: 0
+    };
   });
+
+  useEffect(() => {
+    const details = {
+      client_name: formData.client_name,
+      client_email: formData.client_email,
+      client_phone: formData.client_phone,
+    };
+    localStorage.setItem('dj_unik_client_details', JSON.stringify(details));
+  }, [formData.client_name, formData.client_email, formData.client_phone]);
 
   const updateFormData = (data: Partial<QuoteRequest>) => {
     setFormData(prev => {
       const updated = { ...prev, ...data };
       
-      // Re-calculate package prices if guest_count or hours changed
-      if (data.guest_count !== undefined || data.services !== undefined) {
+      // Re-calculate package prices if guest_count, hours, venue or distance changed
+      if (data.guest_count !== undefined || data.services !== undefined || data.venue !== undefined || data.distance_km !== undefined) {
         updated.services = updated.services?.map(s => {
           if (s.category === 'package') {
             const originalService = SERVICES.find(os => os.id === s.id);
             if (originalService) {
               let basePrice = originalService.price;
               
-              // Special logic for Club / Radio Set (per hour, no guest surcharge)
               if (s.id === 'club-radio') {
                 return { ...s, price: originalService.price * (s.hours || 1) };
               }
@@ -98,6 +112,12 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
               return { ...s, price: originalService.price + extraCost };
             }
           }
+          
+          // Handle Transport dynamic price
+          if (s.id === 'transport' && updated.distance_km) {
+            return { ...s, price: Math.ceil(updated.distance_km * 25) };
+          }
+          
           return s;
         });
       }
@@ -113,7 +133,10 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
 
     // Calculate adjusted price for packages
     let adjustedService = { ...service };
-    if (service.category === 'package') {
+    
+    if (service.id === 'transport') {
+      adjustedService.price = Math.ceil((formData.distance_km || 0) * 25);
+    } else if (service.category === 'package') {
       if (service.id === 'club-radio') {
         adjustedService.price = service.price * (service.hours || 1);
       } else {
@@ -227,11 +250,27 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
                   />
                 </div>
               </div>
+              <div className="space-y-2 p-3 rounded-2xl bg-orange-600/5 border border-orange-600/20">
+                <label className="text-xs font-bold text-orange-500 uppercase tracking-wider flex items-center">
+                  Distance from Northwold (km)
+                  <span className="ml-1 text-orange-500/50">*</span>
+                </label>
+                <div className="relative">
+                  <Calculator className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-orange-500" />
+                  <input
+                    type="number"
+                    value={formData.distance_km || ''}
+                    onChange={e => updateFormData({ distance_km: Number(e.target.value) })}
+                    className="w-full bg-zinc-800 border border-orange-600/30 rounded-xl py-3 pl-10 pr-4 text-zinc-200 focus:outline-none focus:border-orange-600 transition-colors"
+                    placeholder="Enter distance"
+                  />
+                </div>
+              </div>
             </div>
 
             <button
               onClick={nextStep}
-              disabled={!formData.client_name || !formData.client_email || !formData.event_date || !formData.venue}
+              disabled={!formData.client_name || !formData.client_email || !formData.event_date || !formData.venue || !formData.distance_km}
               className="w-full bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center space-x-2"
             >
               <span>Select Package</span>
@@ -264,16 +303,19 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
                   )}
                 </div>
                 
-                {/* Hide Guest Count for Club / Radio */}
+                {/* Guest Count - Highlighted and Compulsory */}
                 {!formData.services?.some(s => s.id === 'club-radio') && (
-                  <div className="w-32 space-y-1">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Guest Count</label>
+                  <div className="w-32 space-y-1 p-2 rounded-xl bg-orange-600/5 border border-orange-600/20">
+                    <label className="text-[10px] font-bold text-orange-500 uppercase tracking-wider flex items-center">
+                      Guest Count
+                      <span className="ml-0.5 text-orange-500/50">*</span>
+                    </label>
                     <input
                       type="number"
                       min="1"
-                      value={formData.guest_count}
+                      value={formData.guest_count || ''}
                       onChange={e => updateFormData({ guest_count: parseInt(e.target.value) || 0 })}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg py-1.5 px-3 text-sm text-zinc-200 focus:outline-none focus:border-orange-600 transition-colors"
+                      className="w-full bg-zinc-800 border border-orange-600/30 rounded-lg py-1.5 px-3 text-sm text-zinc-200 focus:outline-none focus:border-orange-600 transition-colors"
                     />
                   </div>
                 )}
@@ -371,7 +413,7 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
               </button>
               <button
                 onClick={nextStep}
-                disabled={!formData.services?.some(s => s.category === 'package')}
+                disabled={!formData.services?.some(s => s.category === 'package') || (!formData.services?.some(s => s.id === 'club-radio') && !formData.guest_count)}
                 className="flex-[2] bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center space-x-2"
               >
                 <span>Add-ons</span>
@@ -405,9 +447,19 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
                     <div className="flex justify-between items-center">
                       <div className="flex-1">
                         <h4 className="font-bold text-zinc-200 text-sm">{service.name}</h4>
-                        <p className="text-[10px] text-zinc-500 mt-0.5">{service.description}</p>
+                        <p className="text-[10px] text-zinc-500 mt-0.5">
+                          {service.id === 'transport' && formData.distance_km 
+                            ? `${formData.distance_km.toFixed(1)} km from Northwold`
+                            : service.description}
+                        </p>
                       </div>
-                      <span className="text-sm font-bold text-orange-500 ml-4">R {service.price}</span>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-bold text-orange-500 ml-4">
+                          R {service.id === 'transport' && formData.services?.some(s => s.id === 'transport')
+                            ? Math.ceil((formData.distance_km || 0) * 25).toLocaleString()
+                            : service.price}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -496,9 +548,16 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
   );
 };
 
-const QuotePreview = ({ quote, onReset }: { quote: QuoteRequest, onReset: () => void }) => {
+const QuotePreview = ({ quote, onReset, onConfirm }: { quote: QuoteRequest, onReset: () => void, onConfirm: () => void }) => {
   const quoteRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+
+  const handleConfirm = async () => {
+    setIsConfirming(true);
+    await onConfirm();
+    setIsConfirming(false);
+  };
 
   const downloadPDF = async () => {
     if (!quoteRef.current) return;
@@ -534,9 +593,13 @@ const QuotePreview = ({ quote, onReset }: { quote: QuoteRequest, onReset: () => 
       <div ref={quoteRef} className="bg-white text-zinc-900 rounded-3xl overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="bg-zinc-900 p-12 text-white flex justify-between items-end">
-          <div>
+          <div className="space-y-2">
             <h1 className="text-4xl font-black tracking-tighter uppercase italic">DJ UNIK</h1>
-            <p className="text-zinc-400 text-xs tracking-[0.3em] font-bold mt-2 uppercase">Professional DJ & Producer</p>
+            <p className="text-zinc-400 text-[10px] tracking-[0.3em] font-bold uppercase">Professional DJ & Producer</p>
+            <div className="text-[10px] text-zinc-500 font-medium leading-relaxed">
+              Banbury Park, Hunters rd,<br/>
+              Northwold, Johannesburg
+            </div>
           </div>
           <div className="text-right">
             <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Quote No.</p>
@@ -582,6 +645,7 @@ const QuotePreview = ({ quote, onReset }: { quote: QuoteRequest, onReset: () => 
                         {service.name} 
                         {service.category === 'package' && service.id !== 'club-radio' && <span className="text-xs text-orange-600 ml-2">({quote.guest_count} guests)</span>}
                         {service.hours && <span className="text-xs text-zinc-400 ml-2">({service.hours} hours)</span>}
+                        {service.id === 'transport' && quote.distance_km && <span className="text-xs text-orange-600 ml-2">({quote.distance_km.toFixed(1)} km)</span>}
                       </p>
                       <p className="text-xs text-zinc-500">
                         {service.category === 'package' 
@@ -608,12 +672,24 @@ const QuotePreview = ({ quote, onReset }: { quote: QuoteRequest, onReset: () => 
             </table>
           </div>
 
-          <div className="bg-zinc-50 p-8 rounded-2xl border border-zinc-100 space-y-4">
-            <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Payment Terms</h4>
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              A 50% deposit is required to confirm the booking. The remaining balance is due 7 days prior to the event. 
-              Payments can be made via EFT or secure online payment. Quotes are valid for 14 days.
-            </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-zinc-50 p-8 rounded-2xl border border-zinc-100">
+            <div className="space-y-4">
+              <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Payment Terms</h4>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                A 50% deposit is required to confirm the booking. The remaining balance is due 7 days prior to the event. 
+                Payments can be made via EFT or secure online payment. Quotes are valid for 14 days.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em]">Banking Details</h4>
+              <div className="text-xs text-zinc-500 space-y-1">
+                <p><span className="font-bold text-zinc-700">Bank:</span> FNB (First National Bank)</p>
+                <p><span className="font-bold text-zinc-700">Account Name:</span> NV kabanyane</p>
+                <p><span className="font-bold text-zinc-700">Account Number:</span> 630 910 799 71</p>
+                <p><span className="font-bold text-zinc-700">Account Type:</span> Current Account</p>
+                <p><span className="font-bold text-zinc-700">Branch Code:</span> 250655</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -625,6 +701,18 @@ const QuotePreview = ({ quote, onReset }: { quote: QuoteRequest, onReset: () => 
             <p className="text-xs text-zinc-500">www.djunik.co.za</p>
           </div>
           <div className="flex space-x-4" data-html2canvas-ignore>
+            <button 
+              onClick={handleConfirm}
+              disabled={isConfirming}
+              className="bg-orange-600 text-white px-6 py-3 rounded-xl font-bold text-sm flex items-center space-x-2 hover:bg-orange-500 transition-colors disabled:opacity-50 shadow-lg shadow-orange-600/20"
+            >
+              {isConfirming ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4" />
+              )}
+              <span>{isConfirming ? 'Confirming...' : 'Confirm Booking'}</span>
+            </button>
             <button 
               onClick={downloadPDF}
               disabled={isDownloading}
@@ -1199,33 +1287,136 @@ const AdminDashboard = () => {
   const [quotes, setQuotes] = useState<QuoteRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState<'quotes' | 'customers'>('quotes');
 
-  useEffect(() => {
+  const fetchQuotes = () => {
+    setLoading(true);
     fetch('/api/quotes')
       .then(res => res.json())
       .then(data => {
         setQuotes(data);
         setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    fetchQuotes();
   }, []);
+
+  const handleStatusChange = async (id: string, newStatus: QuoteRequest['status']) => {
+    try {
+      const res = await fetch(`/api/quotes/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (res.ok) {
+        setQuotes(prev => prev.map(q => q.id === id ? { ...q, status: newStatus } : q));
+      }
+    } catch (error) {
+      console.error("Failed to update status:", error);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this quote?')) return;
+    
+    try {
+      const res = await fetch(`/api/quotes/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setQuotes(prev => prev.filter(q => q.id !== id));
+      }
+    } catch (error) {
+      console.error("Failed to delete quote:", error);
+    }
+  };
+
+  const getStatusColor = (status: QuoteRequest['status']) => {
+    switch (status) {
+      case 'pending': return 'bg-zinc-800 text-zinc-400 border-zinc-700';
+      case 'canceled': return 'bg-red-900/20 text-red-500 border-red-500/20';
+      case 'booked': return 'bg-blue-900/20 text-blue-500 border-blue-500/20';
+      case 'paid': return 'bg-green-900/20 text-green-500 border-green-500/20';
+      default: return 'bg-zinc-800 text-zinc-400 border-zinc-700';
+    }
+  };
 
   const filteredQuotes = quotes.filter(q => 
     q.client_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    q.id.toLowerCase().includes(searchTerm.toLowerCase())
+    q.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    q.client_email.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const customers = useMemo(() => {
+    const customerMap = new Map<string, {
+      name: string;
+      email: string;
+      phone: string;
+      quotes: QuoteRequest[];
+      totalSpent: number;
+    }>();
+
+    quotes.forEach(q => {
+      const key = q.client_email.toLowerCase();
+      if (!customerMap.has(key)) {
+        customerMap.set(key, {
+          name: q.client_name,
+          email: q.client_email,
+          phone: q.client_phone,
+          quotes: [],
+          totalSpent: 0
+        });
+      }
+      const customer = customerMap.get(key)!;
+      customer.quotes.push(q);
+      if (q.status === 'paid' || q.status === 'booked') {
+        customer.totalSpent += q.total_amount;
+      }
+    });
+
+    return Array.from(customerMap.values()).sort((a, b) => b.quotes.length - a.quotes.length);
+  }, [quotes]);
+
+  const filteredCustomers = customers.filter(c => 
+    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-end">
-        <div>
-          <h2 className="text-3xl font-black text-zinc-100 tracking-tight">Dashboard</h2>
-          <p className="text-zinc-500 text-sm">Manage your quotes and bookings</p>
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-3xl font-black text-zinc-100 tracking-tight">Dashboard</h2>
+            <p className="text-zinc-500 text-sm">Manage your quotes and bookings</p>
+          </div>
+          
+          <div className="flex items-center space-x-1 bg-zinc-900 p-1 rounded-xl w-fit">
+            <button
+              onClick={() => setActiveTab('quotes')}
+              className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                activeTab === 'quotes' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Recent Quotes
+            </button>
+            <button
+              onClick={() => setActiveTab('customers')}
+              className={`px-4 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                activeTab === 'customers' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Customer History
+            </button>
+          </div>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
           <input
             type="text"
-            placeholder="Search quotes..."
+            placeholder={activeTab === 'quotes' ? "Search quotes..." : "Search customers..."}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="bg-zinc-900 border border-zinc-800 rounded-xl py-2 pl-10 pr-4 text-sm text-zinc-300 focus:outline-none focus:border-orange-600 transition-colors w-64"
@@ -1233,64 +1424,185 @@ const AdminDashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-3xl">
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Total Quotes</p>
-          <p className="text-4xl font-black text-zinc-100 mt-2">{quotes.length}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-3xl">
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Total Value</p>
-          <p className="text-4xl font-black text-orange-500 mt-2">R {quotes.reduce((acc, q) => acc + q.total_amount, 0).toLocaleString()}</p>
-        </div>
-        <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-3xl">
-          <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Pending</p>
-          <p className="text-4xl font-black text-zinc-100 mt-2">{quotes.filter(q => q.status === 'pending').length}</p>
-        </div>
-      </div>
+      {activeTab === 'quotes' ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-3xl">
+              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Total Quotes</p>
+              <p className="text-4xl font-black text-zinc-100 mt-2">{quotes.length}</p>
+            </div>
+            <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-3xl">
+              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Total Value</p>
+              <p className="text-4xl font-black text-orange-500 mt-2">R {quotes.reduce((acc, q) => acc + q.total_amount, 0).toLocaleString()}</p>
+            </div>
+            <div className="bg-zinc-900/50 border border-zinc-800 p-6 rounded-3xl">
+              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Pending</p>
+              <p className="text-4xl font-black text-zinc-100 mt-2">{quotes.filter(q => q.status === 'pending').length}</p>
+            </div>
+          </div>
 
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl overflow-hidden">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-zinc-900/80 text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800">
-              <th className="px-6 py-4">ID</th>
-              <th className="px-6 py-4">Client</th>
-              <th className="px-6 py-4">Event Date</th>
-              <th className="px-6 py-4">Amount</th>
-              <th className="px-6 py-4">Status</th>
-              <th className="px-6 py-4"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-800">
-            {loading ? (
-              <tr><td colSpan={6} className="px-6 py-12 text-center text-zinc-500">Loading quotes...</td></tr>
-            ) : filteredQuotes.length === 0 ? (
-              <tr><td colSpan={6} className="px-6 py-12 text-center text-zinc-500">No quotes found</td></tr>
-            ) : filteredQuotes.map(quote => (
-              <tr key={quote.id} className="hover:bg-zinc-800/30 transition-colors">
-                <td className="px-6 py-4 font-mono text-xs text-zinc-400">#{quote.id}</td>
-                <td className="px-6 py-4">
-                  <p className="font-bold text-zinc-200 text-sm">{quote.client_name}</p>
-                  <p className="text-[10px] text-zinc-500">{quote.client_email}</p>
-                </td>
-                <td className="px-6 py-4 text-sm text-zinc-400">{quote.event_date}</td>
-                <td className="px-6 py-4 font-bold text-zinc-200">R {quote.total_amount.toLocaleString()}</td>
-                <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
-                    quote.status === 'pending' ? 'bg-zinc-800 text-zinc-400' : 'bg-green-900/30 text-green-500'
-                  }`}>
-                    {quote.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-right">
-                  <button className="p-2 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-500 hover:text-zinc-200">
-                    <ExternalLink className="w-4 h-4" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl overflow-hidden">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-zinc-900/80 text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800">
+                  <th className="px-6 py-4">ID</th>
+                  <th className="px-6 py-4">Client</th>
+                  <th className="px-6 py-4">Event Date</th>
+                  <th className="px-6 py-4">Amount</th>
+                  <th className="px-6 py-4">Status</th>
+                  <th className="px-6 py-4"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {loading ? (
+                  <tr><td colSpan={6} className="px-6 py-12 text-center text-zinc-500">Loading quotes...</td></tr>
+                ) : filteredQuotes.length === 0 ? (
+                  <tr><td colSpan={6} className="px-6 py-12 text-center text-zinc-500">No quotes found</td></tr>
+                ) : filteredQuotes.map(quote => (
+                  <tr key={quote.id} className="hover:bg-zinc-800/30 transition-colors">
+                    <td className="px-6 py-4 font-mono text-xs text-zinc-400">#{quote.id}</td>
+                    <td className="px-6 py-4">
+                      <p className="font-bold text-zinc-200 text-sm">{quote.client_name}</p>
+                      <p className="text-[10px] text-zinc-500">{quote.client_email}</p>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-zinc-400">{quote.event_date}</td>
+                    <td className="px-6 py-4 font-bold text-zinc-200">R {quote.total_amount.toLocaleString()}</td>
+                    <td className="px-6 py-4">
+                      <select
+                        value={quote.status || 'pending'}
+                        onChange={(e) => handleStatusChange(quote.id, e.target.value as any)}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest border focus:outline-none transition-all appearance-none cursor-pointer ${getStatusColor(quote.status)}`}
+                      >
+                        <option value="pending">Pending</option>
+                        <option value="booked">Deposit (Booked)</option>
+                        <option value="paid">Full Paid</option>
+                        <option value="canceled">Canceled</option>
+                      </select>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end items-center space-x-2">
+                        <button className="p-2 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-500 hover:text-zinc-200">
+                          <ExternalLink className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDelete(quote.id)}
+                          className="p-2 hover:bg-red-900/20 rounded-lg transition-colors text-zinc-500 hover:text-red-500"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <div className="grid grid-cols-1 gap-6">
+          {filteredCustomers.map(customer => (
+            <div key={customer.email} className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 space-y-6">
+              <div className="flex justify-between items-start">
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-zinc-800 rounded-2xl flex items-center justify-center">
+                    <User className="w-6 h-6 text-orange-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-zinc-100">{customer.name}</h3>
+                    <div className="flex items-center space-x-3 text-xs text-zinc-500">
+                      <span className="flex items-center space-x-1">
+                        <Mail className="w-3 h-3" />
+                        <span>{customer.email}</span>
+                      </span>
+                      <span className="flex items-center space-x-1">
+                        <Phone className="w-3 h-3" />
+                        <span>{customer.phone}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Total Value</p>
+                  <p className="text-2xl font-black text-orange-500">R {customer.totalSpent.toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center space-x-2">
+                  <History className="w-3 h-3" />
+                  <span>Quote History ({customer.quotes.length})</span>
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {customer.quotes.map(q => (
+                    <div key={q.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex justify-between items-center group hover:border-zinc-700 transition-all">
+                      <div>
+                        <p className="text-[10px] font-mono text-zinc-500">#{q.id}</p>
+                        <p className="text-xs font-bold text-zinc-300">{q.event_type}</p>
+                        <p className="text-[10px] text-zinc-500">{q.event_date}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-zinc-200">R {q.total_amount.toLocaleString()}</p>
+                        <span className={`text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full ${getStatusColor(q.status)}`}>
+                          {q.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+          {filteredCustomers.length === 0 && (
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-12 text-center text-zinc-500">
+              No customers found matching your search.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ThankYou = ({ onReset }: { onReset: () => void }) => {
+  return (
+    <div className="max-w-2xl mx-auto text-center space-y-8 py-12">
+      <motion.div
+        initial={{ scale: 0.5, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="w-24 h-24 bg-green-900/30 border border-green-500/50 rounded-full flex items-center justify-center mx-auto"
+      >
+        <CheckCircle2 className="w-12 h-12 text-green-500" />
+      </motion.div>
+      <div className="space-y-4">
+        <h2 className="text-5xl font-black tracking-tight text-white">Booking Confirmed!</h2>
+        <p className="text-zinc-500 text-lg">
+          Thank you for choosing DJ Unik. We've received your confirmation and will be in touch shortly 
+          to finalize the details for your event.
+        </p>
       </div>
+      <div className="bg-zinc-900/50 border border-zinc-800 p-8 rounded-3xl space-y-4 max-w-md mx-auto">
+        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">What's Next?</h3>
+        <ul className="text-left text-sm text-zinc-400 space-y-3">
+          <li className="flex items-start space-x-3">
+            <span className="w-5 h-5 bg-zinc-800 rounded-full flex items-center justify-center text-[10px] font-bold text-orange-500 mt-0.5">1</span>
+            <span>Check your email for a copy of the confirmed quote.</span>
+          </li>
+          <li className="flex items-start space-x-3">
+            <span className="w-5 h-5 bg-zinc-800 rounded-full flex items-center justify-center text-[10px] font-bold text-orange-500 mt-0.5">2</span>
+            <span>Our team will contact you within 24 hours.</span>
+          </li>
+          <li className="flex items-start space-x-3">
+            <span className="w-5 h-5 bg-zinc-800 rounded-full flex items-center justify-center text-[10px] font-bold text-orange-500 mt-0.5">3</span>
+            <span>Secure your date with the 50% deposit.</span>
+          </li>
+        </ul>
+      </div>
+      <button
+        onClick={onReset}
+        className="bg-zinc-800 hover:bg-zinc-700 text-white font-bold py-4 px-8 rounded-xl transition-all"
+      >
+        Return to Home
+      </button>
     </div>
   );
 };
@@ -1298,9 +1610,30 @@ const AdminDashboard = () => {
 // --- Main App ---
 
 export default function App() {
-  const [view, setView] = useState<'form' | 'preview' | 'admin' | 'gallery' | 'charts' | 'playlist'>('form');
+  const [view, setView] = useState<'form' | 'preview' | 'admin' | 'gallery' | 'charts' | 'playlist' | 'thank-you'>('form');
   const [currentQuote, setCurrentQuote] = useState<QuoteRequest | null>(null);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+
+  const handleConfirmBooking = async () => {
+    if (!currentQuote) return;
+
+    try {
+      const res = await fetch(`/api/quotes/${currentQuote.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'confirmed' })
+      });
+
+      if (res.ok) {
+        setView('thank-you');
+      } else {
+        alert('Failed to confirm booking. Please try again.');
+      }
+    } catch (error) {
+      console.error("Failed to confirm booking:", error);
+      alert('An error occurred. Please try again.');
+    }
+  };
 
   const handleQuoteComplete = async (data: Partial<QuoteRequest>) => {
     const quoteData = {
@@ -1432,7 +1765,22 @@ export default function App() {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
             >
-              <QuotePreview quote={currentQuote} onReset={() => setView('form')} />
+              <QuotePreview 
+                quote={currentQuote} 
+                onReset={() => setView('form')} 
+                onConfirm={handleConfirmBooking}
+              />
+            </motion.div>
+          )}
+
+          {view === 'thank-you' && (
+            <motion.div
+              key="thank-you-view"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <ThankYou onReset={() => setView('form')} />
             </motion.div>
           )}
 

@@ -16,8 +16,9 @@ export interface QuoteRequest {
   event_date: string;
   venue: string;
   guest_count: number;
+  distance_km?: number;
   services: Service[];
   total_amount: number;
-  status?: 'pending' | 'confirmed' | 'expired';
+  status?: 'pending' | 'canceled' | 'booked' | 'paid';
   created_at?: string;
 }

@@ -90,6 +90,37 @@ async function startServer() {
     }
   });
 
+  app.patch("/api/quotes/:id/status", (req, res) => {
+    const { status } = req.body;
+    try {
+      const stmt = db.prepare("UPDATE quotes SET status = ? WHERE id = ?");
+      const result = stmt.run(status, req.params.id);
+      if (result.changes > 0) {
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ error: "Quote not found" });
+      }
+    } catch (error) {
+      console.error("Error updating quote status:", error);
+      res.status(500).json({ error: "Failed to update quote status" });
+    }
+  });
+
+  app.delete("/api/quotes/:id", (req, res) => {
+    try {
+      const stmt = db.prepare("DELETE FROM quotes WHERE id = ?");
+      const result = stmt.run(req.params.id);
+      if (result.changes > 0) {
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ error: "Quote not found" });
+      }
+    } catch (error) {
+      console.error("Error deleting quote:", error);
+      res.status(500).json({ error: "Failed to delete quote" });
+    }
+  });
+
   // Spotify OAuth Routes
   const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
   const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;

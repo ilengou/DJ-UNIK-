@@ -2,9 +2,9 @@ import { Service } from "./types";
 
 export const SERVICES: Service[] = [
   {
-    id: 'wedding-basic',
-    name: 'Wedding Basic',
-    description: 'Perfect for intimate weddings. Includes 5 hours of play, basic sound system (up to 50 guests), and 1 wireless mic.',
+    id: 'wedding-optimum',
+    name: 'Wedding Optimum',
+    description: 'Perfect for intimate weddings. Includes 5 hours of play, optimum sound system (up to 50 guests), and 1 wireless mic.',
     price: 4500,
     category: 'package'
   },
@@ -48,6 +48,13 @@ export const SERVICES: Service[] = [
     name: 'Additional Hour',
     description: 'Overtime rate per hour.',
     price: 800,
+    category: 'addon'
+  },
+  {
+    id: 'transport',
+    name: 'Transport',
+    description: 'Travel cost calculated from Northwold (R25/km).',
+    price: 0,
     category: 'addon'
   }
 ];
