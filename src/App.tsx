@@ -548,7 +548,17 @@ const QuoteForm = ({ onComplete }: { onComplete: (data: Partial<QuoteRequest>) =
   );
 };
 
-const QuotePreview = ({ quote, onReset, onConfirm }: { quote: QuoteRequest, onReset: () => void, onConfirm: () => void }) => {
+const QuotePreview = ({ 
+  quote, 
+  onReset, 
+  onConfirm,
+  isAdmin = false
+}: { 
+  quote: QuoteRequest, 
+  onReset: () => void, 
+  onConfirm: () => void,
+  isAdmin?: boolean
+}) => {
   const quoteRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -701,18 +711,20 @@ const QuotePreview = ({ quote, onReset, onConfirm }: { quote: QuoteRequest, onRe
             <p className="text-xs text-zinc-500">www.djunik.co.za</p>
           </div>
           <div className="flex space-x-4" data-html2canvas-ignore>
-            <button 
-              onClick={handleConfirm}
-              disabled={isConfirming}
-              className="bg-orange-600 text-white px-6 py-3 rounded-xl font-bold text-sm flex items-center space-x-2 hover:bg-orange-500 transition-colors disabled:opacity-50 shadow-lg shadow-orange-600/20"
-            >
-              {isConfirming ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4" />
-              )}
-              <span>{isConfirming ? 'Confirming...' : 'Confirm Booking'}</span>
-            </button>
+            {!isAdmin && (
+              <button 
+                onClick={handleConfirm}
+                disabled={isConfirming}
+                className="bg-orange-600 text-white px-6 py-3 rounded-xl font-bold text-sm flex items-center space-x-2 hover:bg-orange-500 transition-colors disabled:opacity-50 shadow-lg shadow-orange-600/20"
+              >
+                {isConfirming ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4" />
+                )}
+                <span>{isConfirming ? 'Confirming...' : 'Confirm Booking'}</span>
+              </button>
+            )}
             <button 
               onClick={downloadPDF}
               disabled={isDownloading}
@@ -734,8 +746,8 @@ const QuotePreview = ({ quote, onReset, onConfirm }: { quote: QuoteRequest, onRe
           onClick={onReset}
           className="text-zinc-500 hover:text-zinc-300 text-sm font-bold uppercase tracking-widest transition-colors flex items-center space-x-2"
         >
-          <Plus className="w-4 h-4" />
-          <span>Create New Quote</span>
+          {isAdmin ? <ChevronLeft className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+          <span>{isAdmin ? 'Back to Dashboard' : 'Create New Quote'}</span>
         </button>
       </div>
     </div>
@@ -1283,11 +1295,22 @@ const PlaylistImporter = () => {
   );
 };
 
-const AdminDashboard = () => {
+const AdminDashboard = ({ 
+  setView, 
+  setCurrentQuote 
+}: { 
+  setView: (view: any) => void, 
+  setCurrentQuote: (quote: QuoteRequest | null) => void 
+}) => {
   const [quotes, setQuotes] = useState<QuoteRequest[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingClients, setLoadingClients] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'quotes' | 'customers'>('quotes');
+  const [expandedClient, setExpandedClient] = useState<string | null>(null);
+  const [clientHistory, setClientHistory] = useState<Record<string, QuoteRequest[]>>({});
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   const fetchQuotes = () => {
     setLoading(true);
@@ -1299,9 +1322,34 @@ const AdminDashboard = () => {
       });
   };
 
+  const fetchClients = () => {
+    setLoadingClients(true);
+    fetch('/api/clients')
+      .then(res => res.json())
+      .then(data => {
+        setClients(data);
+        setLoadingClients(false);
+      });
+  };
+
+  const fetchClientHistory = (email: string) => {
+    if (clientHistory[email]) return;
+    fetch(`/api/clients/${encodeURIComponent(email)}/history`)
+      .then(res => res.json())
+      .then(data => {
+        setClientHistory(prev => ({ ...prev, [email]: data }));
+      });
+  };
+
   useEffect(() => {
     fetchQuotes();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'customers') {
+      fetchClients();
+    }
+  }, [activeTab]);
 
   const handleStatusChange = async (id: string, newStatus: QuoteRequest['status']) => {
     try {
@@ -1319,18 +1367,22 @@ const AdminDashboard = () => {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this quote?')) return;
-    
     try {
       const res = await fetch(`/api/quotes/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
         setQuotes(prev => prev.filter(q => q.id !== id));
+        setDeleteConfirm(null);
       }
     } catch (error) {
       console.error("Failed to delete quote:", error);
     }
+  };
+
+  const handleOpenQuote = (quote: QuoteRequest) => {
+    setCurrentQuote(quote);
+    setView('preview');
   };
 
   const getStatusColor = (status: QuoteRequest['status']) => {
@@ -1349,37 +1401,7 @@ const AdminDashboard = () => {
     q.client_email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const customers = useMemo(() => {
-    const customerMap = new Map<string, {
-      name: string;
-      email: string;
-      phone: string;
-      quotes: QuoteRequest[];
-      totalSpent: number;
-    }>();
-
-    quotes.forEach(q => {
-      const key = q.client_email.toLowerCase();
-      if (!customerMap.has(key)) {
-        customerMap.set(key, {
-          name: q.client_name,
-          email: q.client_email,
-          phone: q.client_phone,
-          quotes: [],
-          totalSpent: 0
-        });
-      }
-      const customer = customerMap.get(key)!;
-      customer.quotes.push(q);
-      if (q.status === 'paid' || q.status === 'booked') {
-        customer.totalSpent += q.total_amount;
-      }
-    });
-
-    return Array.from(customerMap.values()).sort((a, b) => b.quotes.length - a.quotes.length);
-  }, [quotes]);
-
-  const filteredCustomers = customers.filter(c => 
+  const filteredCustomers = clients.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -1481,15 +1503,38 @@ const AdminDashboard = () => {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end items-center space-x-2">
-                        <button className="p-2 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-500 hover:text-zinc-200">
+                        <button 
+                          onClick={() => handleOpenQuote(quote)}
+                          className="p-2 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-500 hover:text-zinc-200"
+                          title="Open Quote"
+                        >
                           <ExternalLink className="w-4 h-4" />
                         </button>
-                        <button 
-                          onClick={() => handleDelete(quote.id)}
-                          className="p-2 hover:bg-red-900/20 rounded-lg transition-colors text-zinc-500 hover:text-red-500"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        
+                        {deleteConfirm === quote.id ? (
+                          <div className="flex items-center space-x-1 animate-in fade-in zoom-in duration-200">
+                            <button 
+                              onClick={() => handleDelete(quote.id)}
+                              className="px-2 py-1 bg-red-600 text-white text-[10px] font-bold rounded hover:bg-red-700 transition-colors"
+                            >
+                              Confirm
+                            </button>
+                            <button 
+                              onClick={() => setDeleteConfirm(null)}
+                              className="px-2 py-1 bg-zinc-700 text-zinc-300 text-[10px] font-bold rounded hover:bg-zinc-600 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={() => setDeleteConfirm(quote.id)}
+                            className="p-2 hover:bg-red-900/20 rounded-lg transition-colors text-zinc-500 hover:text-red-500"
+                            title="Delete Quote"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1500,7 +1545,12 @@ const AdminDashboard = () => {
         </>
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          {filteredCustomers.map(customer => (
+          {loadingClients ? (
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-12 text-center text-zinc-500">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-orange-500" />
+              Loading client profiles...
+            </div>
+          ) : filteredCustomers.map(customer => (
             <div key={customer.email} className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 space-y-6">
               <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-4">
@@ -1523,18 +1573,37 @@ const AdminDashboard = () => {
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Total Value</p>
-                  <p className="text-2xl font-black text-orange-500">R {customer.totalSpent.toLocaleString()}</p>
+                  <p className="text-2xl font-black text-orange-500">R {customer.total_spent.toLocaleString()}</p>
                 </div>
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center space-x-2">
+                <button 
+                  onClick={() => {
+                    if (expandedClient === customer.email) {
+                      setExpandedClient(null);
+                    } else {
+                      setExpandedClient(customer.email);
+                      fetchClientHistory(customer.email);
+                    }
+                  }}
+                  className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center space-x-2 hover:text-orange-500 transition-colors"
+                >
                   <History className="w-3 h-3" />
-                  <span>Quote History ({customer.quotes.length})</span>
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {customer.quotes.map(q => (
-                    <div key={q.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex justify-between items-center group hover:border-zinc-700 transition-all">
+                  <span>Quote History ({customer.quote_count})</span>
+                  <ChevronRight className={`w-3 h-3 transition-transform ${expandedClient === customer.email ? 'rotate-90' : ''}`} />
+                </button>
+                
+                {expandedClient === customer.email && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    {!clientHistory[customer.email] ? (
+                      <div className="col-span-full py-4 text-center text-zinc-600 text-xs">Loading history...</div>
+                    ) : clientHistory[customer.email].map(q => (
+                    <div 
+                      key={q.id} 
+                      onClick={() => handleOpenQuote(q)}
+                      className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex justify-between items-center group hover:border-zinc-700 transition-all cursor-pointer"
+                    >
                       <div>
                         <p className="text-[10px] font-mono text-zinc-500">#{q.id}</p>
                         <p className="text-xs font-bold text-zinc-300">{q.event_type}</p>
@@ -1547,12 +1616,13 @@ const AdminDashboard = () => {
                         </span>
                       </div>
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
-          {filteredCustomers.length === 0 && (
+          {!loadingClients && filteredCustomers.length === 0 && (
             <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-12 text-center text-zinc-500">
               No customers found matching your search.
             </div>
@@ -1613,6 +1683,7 @@ export default function App() {
   const [view, setView] = useState<'form' | 'preview' | 'admin' | 'gallery' | 'charts' | 'playlist' | 'thank-you'>('form');
   const [currentQuote, setCurrentQuote] = useState<QuoteRequest | null>(null);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [isPreviewingFromAdmin, setIsPreviewingFromAdmin] = useState(false);
 
   const handleConfirmBooking = async () => {
     if (!currentQuote) return;
@@ -1657,6 +1728,7 @@ export default function App() {
           id: result.id
         };
         setCurrentQuote(fullQuote);
+        setIsPreviewingFromAdmin(false);
         setView('preview');
       }
     } catch (error) {
@@ -1668,6 +1740,7 @@ export default function App() {
         id: fallbackId
       };
       setCurrentQuote(fullQuote);
+      setIsPreviewingFromAdmin(false);
       setView('preview');
     }
   };
@@ -1677,7 +1750,7 @@ export default function App() {
       {/* Navigation */}
       <nav className="border-b border-zinc-900 bg-black/50 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center space-x-2 cursor-pointer" onClick={() => setView('form')}>
+          <div className="flex items-center space-x-2 cursor-pointer" onClick={() => { setView('form'); setIsPreviewingFromAdmin(false); }}>
             <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center">
               <Music className="w-6 h-6 text-white" />
             </div>
@@ -1689,7 +1762,7 @@ export default function App() {
 
           <div className="flex items-center space-x-1 bg-zinc-900 p-1 rounded-xl">
             <button
-              onClick={() => setView('form')}
+              onClick={() => { setView('form'); setIsPreviewingFromAdmin(false); }}
               className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center space-x-2 ${
                 view === 'form' || view === 'preview' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'
               }`}
@@ -1698,7 +1771,7 @@ export default function App() {
               <span>Generator</span>
             </button>
             <button
-              onClick={() => setView('gallery')}
+              onClick={() => { setView('gallery'); setIsPreviewingFromAdmin(false); }}
               className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center space-x-2 ${
                 view === 'gallery' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'
               }`}
@@ -1707,7 +1780,7 @@ export default function App() {
               <span>Gallery</span>
             </button>
             <button
-              onClick={() => setView('charts')}
+              onClick={() => { setView('charts'); setIsPreviewingFromAdmin(false); }}
               className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center space-x-2 ${
                 view === 'charts' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'
               }`}
@@ -1716,7 +1789,7 @@ export default function App() {
               <span>Charts</span>
             </button>
             <button
-              onClick={() => setView('playlist')}
+              onClick={() => { setView('playlist'); setIsPreviewingFromAdmin(false); }}
               className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center space-x-2 ${
                 view === 'playlist' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'
               }`}
@@ -1725,7 +1798,7 @@ export default function App() {
               <span>Importer</span>
             </button>
             <button
-              onClick={() => setView('admin')}
+              onClick={() => { setView('admin'); setIsPreviewingFromAdmin(false); }}
               className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center space-x-2 ${
                 view === 'admin' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'
               }`}
@@ -1767,7 +1840,15 @@ export default function App() {
             >
               <QuotePreview 
                 quote={currentQuote} 
-                onReset={() => setView('form')} 
+                isAdmin={isPreviewingFromAdmin}
+                onReset={() => {
+                  if (isPreviewingFromAdmin) {
+                    setView('admin');
+                    setIsPreviewingFromAdmin(false);
+                  } else {
+                    setView('form');
+                  }
+                }} 
                 onConfirm={handleConfirmBooking}
               />
             </motion.div>
@@ -1825,7 +1906,13 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
             >
               {isAdminAuthenticated ? (
-                <AdminDashboard />
+                <AdminDashboard 
+                  setView={(v) => {
+                    setView(v);
+                    if (v === 'preview') setIsPreviewingFromAdmin(true);
+                  }} 
+                  setCurrentQuote={setCurrentQuote} 
+                />
               ) : (
                 <AdminLogin onLogin={() => setIsAdminAuthenticated(true)} />
               )}

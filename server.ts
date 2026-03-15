@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
@@ -8,8 +7,10 @@ import axios from "axios";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Handle __dirname for both ESM and CJS
+const isCjs = typeof require !== 'undefined' && typeof module !== 'undefined';
+const __filename_val = isCjs ? __filename : fileURLToPath(import.meta.url);
+const __dirname_val = isCjs ? __dirname : path.dirname(__filename_val);
 
 const db = new Database("quotes.db");
 
@@ -30,9 +31,19 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS clients (
+    email TEXT PRIMARY KEY,
+    name TEXT,
+    phone TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
 
@@ -52,6 +63,17 @@ async function startServer() {
       const countResult = db.prepare("SELECT COUNT(*) as count FROM quotes WHERE date(created_at) = date('now')").get() as { count: number };
       const sequence = (countResult.count + 1).toString().padStart(2, '0');
       const id = `${dateStr}-${sequence}`;
+
+      // Update or Insert client profile
+      const clientStmt = db.prepare(`
+        INSERT INTO clients (email, name, phone, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(email) DO UPDATE SET
+          name = excluded.name,
+          phone = excluded.phone,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+      clientStmt.run(client_email, client_name, client_phone);
 
       const stmt = db.prepare(`
         INSERT INTO quotes (id, client_name, client_email, client_phone, event_type, event_date, venue, services, total_amount)
@@ -118,6 +140,35 @@ async function startServer() {
     } catch (error) {
       console.error("Error deleting quote:", error);
       res.status(500).json({ error: "Failed to delete quote" });
+    }
+  });
+
+  app.get("/api/clients", (req, res) => {
+    try {
+      const clients = db.prepare(`
+        SELECT 
+          c.*,
+          COUNT(q.id) as quote_count,
+          SUM(CASE WHEN q.status IN ('paid', 'booked') THEN q.total_amount ELSE 0 END) as total_spent
+        FROM clients c
+        LEFT JOIN quotes q ON c.email = q.client_email
+        GROUP BY c.email
+        ORDER BY c.updated_at DESC
+      `).all();
+      res.json(clients);
+    } catch (error) {
+      console.error("Error fetching clients:", error);
+      res.status(500).json({ error: "Failed to fetch clients" });
+    }
+  });
+
+  app.get("/api/clients/:email/history", (req, res) => {
+    try {
+      const quotes = db.prepare("SELECT * FROM quotes WHERE client_email = ? ORDER BY created_at DESC").all();
+      res.json(quotes.map(q => ({ ...q, services: JSON.parse(q.services as string) })));
+    } catch (error) {
+      console.error("Error fetching client history:", error);
+      res.status(500).json({ error: "Failed to fetch client history" });
     }
   });
 
@@ -228,6 +279,7 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
